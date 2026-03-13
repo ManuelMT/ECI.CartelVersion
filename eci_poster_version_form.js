@@ -45,14 +45,46 @@ var UsePosterVersion = window.UsePosterVersion || {};
         if ((!!firstTime && !entityId) || (!!firstTime && !!entityId)) {
             // formContext.getAttribute("eci_pages_with_errors").addOnChange(this.actionMethods.pagesWithErrosOnChange);
             // formContext.data.entity.addOnPostSave(this.actionMethods.validNextState);
-            const file = formContext.getAttribute("eci_poster_file_temp").getValue();
-            if (!file) {
-                formContext.getAttribute("eci_poster_file_temp").addOnChange(this.actionMethods.fileOnChange);
+
+            // VALIDACION CUANDO SE USA DATAVERSE COMO ALMANCENAMIENTO - comentado porque se utilizara BlobStorage
+            // const file = formContext.getAttribute("eci_poster_file_temp").getValue();
+            // if (!file) {
+            //     formContext.getAttribute("eci_poster_file_temp").addOnChange(this.actionMethods.fileOnChange);
+            // }
+            // FIN VALIDACION CUANDO SE USA DATAVERSE COMO ALMANCENAMIENTO
+
+            const urlFileUploaded = formContext.getAttribute("eci_blob_document_path").getValue();
+            if (!urlFileUploaded) {
+                formContext.getAttribute("eci_blob_document_path").addOnChange(this.actionMethods.validUploadeFileFromPCF);
             }
 
             firstTime = false;
         }
-
+        //PCF
+        var controlDGD = formContext.getControl("eci_draganddrop_documents");
+        if (controlDGD) {
+            const self =  this;
+            controlDGD.addEventHandler("onValidateFilesFromPCF", async function(params){
+                console.log("Archivos recibidos:", params.files);
+                try {
+                    // Validar todos los archivos
+                    const resultados = await Promise.all(
+                        params.files.map(file => 
+                            self.pcfValidationFiles.validatePosterFile(file, executionContext)
+                        )
+                    );
+                    // Si alguno falló, todo es inválido
+                    const todosValidos = resultados.every(resultado => resultado === true);
+                    
+                    params.callback(todosValidos);
+                    // const  esValido = await self.pcfValidationFiles.validatePosterFile(params.files, executionContext);
+                    // params.callback(esValido);
+                } catch (error) {
+                    console.error("Error en validación de archivos:", error);
+                    params.callback(false);
+                }
+            })
+        }
     };
     this.actionMethods = {
         validUploadPoster: async (executionContext) => {
@@ -62,8 +94,14 @@ var UsePosterVersion = window.UsePosterVersion || {};
             const versionName = formContext.getAttribute("eci_name").getValue();
             const entityId = formContext.data.entity.getId()?.replaceAll("{", "")?.replaceAll("}", "");
             const cartelLookUp = formContext.getAttribute("eci_poster").getValue();
-            const posterFile = formContext.getAttribute("eci_poster_file_temp").getValue();
-            const posterFileOriginal = formContext.getAttribute("eci_poster_file").getValue();
+
+            // const posterFile = formContext.getAttribute("eci_poster_file_temp").getValue();
+            // const posterFileOriginal = formContext.getAttribute("eci_poster_file").getValue();
+
+            const posterFile = formContext.getAttribute("eci_blob_document_path").getValue();
+            const posterFileOriginal = formContext.getAttribute("eci_draganddrop_documents").getValue();
+
+
             const posterWithError = formContext.getAttribute("eci_poster_with_error").getValue();
             const [cartelLk] = !!cartelLookUp ? cartelLookUp : [];
             const cartelId = cartelLk?.id?.replaceAll("{", "")?.replaceAll("}", "");
@@ -80,9 +118,13 @@ var UsePosterVersion = window.UsePosterVersion || {};
                 versionName === currentVersion?.eci_name &&
                 !posterFile
             )
-                formContext.getControl("eci_poster_file_temp").setDisabled(false);
-            else
-                formContext.getControl("eci_poster_file_temp").setDisabled(true);
+                // formContext.getControl("eci_poster_file_temp").setDisabled(false);
+                formContext.getControl("eci_draganddrop_documents").setDisabled(false);
+            else {
+                // formContext.getControl("eci_poster_file_temp").setDisabled(true);
+                formContext.getControl("eci_draganddrop_documents").setDisabled(true);
+                formContext.getAttribute("eci_blob_document_path").removeOnChange(this.actionMethods.validUploadeFileFromPCF);
+            }
 
             if (cartel?.eci_poster_status === CONSTANTS.ESTADO_CARTEL.CARTEL_EN_CORRECCION) {
                 formContext.getControl("eci_pages_with_errors")?.setDisabled(true);
@@ -122,17 +164,18 @@ var UsePosterVersion = window.UsePosterVersion || {};
             //     this.genericMethods.disableAllFields(executionContext);
             // }
 
-            if (!!posterFile && !posterFileOriginal) {
-                const resDelete = await fetch(`${urlBase}/api/data/v9.0/eci_poster_versions(${entityId})/eci_poster_file_temp`, {
-                    method: 'DELETE',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                });
-                var alertStringsError = { confirmButtonLabel: "Aceptar", text: `Se ha encontrado una inconsistencia en el archivo cargado, se procederá a eliminarlo.`, title: "Error" };
-                await Xrm.Navigation.openAlertDialog(alertStringsError);
-                Xrm.Utility.openEntityForm(formContext.data.entity.getEntityName(), formContext.data.entity.getId());
-            }
+            //ELIMINAR CUANDO HAY INCOSISTENCIA EN DATAVERSE - NO APLICA PARA BLOB
+            // if (!!posterFile && !posterFileOriginal) {
+            //     const resDelete = await fetch(`${urlBase}/api/data/v9.0/eci_poster_versions(${entityId})/eci_poster_file_temp`, {
+            //         method: 'DELETE',
+            //         headers: {
+            //             'Content-Type': 'application/json'
+            //         }
+            //     });
+            //     var alertStringsError = { confirmButtonLabel: "Aceptar", text: `Se ha encontrado una inconsistencia en el archivo cargado, se procederá a eliminarlo.`, title: "Error" };
+            //     await Xrm.Navigation.openAlertDialog(alertStringsError);
+            //     Xrm.Utility.openEntityForm(formContext.data.entity.getEntityName(), formContext.data.entity.getId());
+            // }
 
         },
         fileOnChange: async (executionContext) => {
@@ -340,7 +383,9 @@ var UsePosterVersion = window.UsePosterVersion || {};
                 const userId = Xrm.Utility.getGlobalContext().userSettings.userId?.replaceAll("{", "")?.replaceAll("}", "");
 
                 const entityId = formContext.data.entity.getId()?.replaceAll("{", "")?.replaceAll("}", "");
-                const file = formContext.getAttribute("eci_poster_file_temp").getValue();
+                // const file = formContext.getAttribute("eci_poster_file_temp").getValue();
+                const rutaBlob = formContext.getAttribute("eci_blob_document_path").getValue();
+                const file = rutaBlob.split('/').pop();
                 const posterWithError = formContext.getAttribute("eci_poster_with_error").getValue();
                 const pagesWithErrors = formContext.getAttribute("eci_pages_with_errors").getValue();
 
@@ -356,7 +401,8 @@ var UsePosterVersion = window.UsePosterVersion || {};
 
                 const nextState = setNextState[cartel?.eci_poster_status]() || 0;
 
-                const [fileNameWithOutExtension] = file?.fileName?.split(".pdf");
+                // const [fileNameWithOutExtension] = file?.fileName?.split(".pdf");
+                const [fileNameWithOutExtension] = file.split(".pdf");
                 const posterName = cartel?.eci_poster_name || fileNameWithOutExtension;
                 const [bpfCartel] = cartel?.bpf_eci_poster_eci_bpf_poster || [];
 
@@ -400,6 +446,28 @@ var UsePosterVersion = window.UsePosterVersion || {};
                 await Xrm.Navigation.openAlertDialog(alertStringsError);
             }
 
+        },
+        validUploadeFileFromPCF: async (executionContext) => {
+            Xrm.Utility.showProgressIndicator("Cargando...");
+            // Obtiene el contexto del formulario
+            var formContext = executionContext.getFormContext();
+            const urlUploadeFile = formContext.getAttribute("eci_blob_document_path").getValue();
+            if(urlUploadeFile){
+                var fileName = urlUploadeFile.split('/').pop();
+                const [fileNameWithOutExtension] = fileName?.split(".");
+                formContext.getAttribute("eci_file_name").setValue(fileNameWithOutExtension);
+                formContext.data.save();
+
+                await this.actionMethods.changeNextState(executionContext);
+                var alertStrings = { confirmButtonLabel: "Aceptar", text: `El documento '${fileName}' se subió correctamente.`, title: "Información" };
+                await Xrm.Navigation.openAlertDialog(alertStrings);
+
+                const cartelLookUp = formContext.getAttribute("eci_poster").getValue();
+                const [cartelLk] = !!cartelLookUp ? cartelLookUp : [];
+                const cartelId = cartelLk?.id?.replaceAll("{", "")?.replaceAll("}", "");
+                Xrm.Utility.openEntityForm("eci_poster", cartelId);
+            }
+            Xrm.Utility.closeProgressIndicator();
         }
     }
     this.genericMethods = {
@@ -566,5 +634,154 @@ var UsePosterVersion = window.UsePosterVersion || {};
             var response = await Xrm.WebApi.deleteRecord("eci_poster_version", versionId);
             return response;
         },
+    };
+    this.pcfValidationFiles = {
+        validatePosterFile: async (file, executionContext) => {
+            let respuestaValidacion = false;
+            Xrm.Utility.showProgressIndicator("Cargando...");
+            // Obtiene el contexto del formulario
+            var formContext = executionContext.getFormContext();
+            var globalContext = Xrm.Utility.getGlobalContext();
+            var urlBase = globalContext.getClientUrl();
+            const entityId = formContext.data.entity.getId()?.replaceAll("{", "")?.replaceAll("}", "");
+
+            const serviceMethods = this.serviceMehods;
+            const genericMethods = this.genericMethods;
+            const actionMethods = this.actionMethods;
+
+
+            let messages = [];
+            // const file = formContext.getAttribute("eci_poster_file_temp").getValue();
+            const versionName = formContext.getAttribute("eci_name").getValue();
+            if (!!file) {
+                var name = decodeURIComponent(file?.name || '');
+                const [fileNameWithOutExtension] = name?.split('.pdf');
+                const cartelLookUp = formContext.getAttribute("eci_poster").getValue();
+                const [cartelLk] = !!cartelLookUp ? cartelLookUp : [];
+                const cartelId = cartelLk?.id?.replaceAll("{", "")?.replaceAll("}", "");
+                const cartel = await serviceMethods.getCartelById(cartelId);
+                const versionsDuplicated = await serviceMethods.getCartelVersionesDuplicated(cartelId, versionName, entityId)
+                let cartelOriginal = [];
+
+                await Promise.all(versionsDuplicated?.map(async (x) => {
+                    if (!!x?.eci_poster_versionid) {
+                        await serviceMethods.deleteCartelVersion(x?.eci_poster_versionid)
+                    }
+                }))
+
+                const validFile = async () => {
+                    let valido = true;
+                    if (genericMethods.charactersNotAllowed(name)) {
+                        messages.push(`Documento '${name}': contiene en su nombre caracteres no válidos como \\/*?|!\"#$%&:;<=>?@'.`);
+                        valido = false;
+                    }
+                    if (!genericMethods.pdfExtension(name)) {
+                        messages.push(`Documento '${name}': no es un documento PDF. Solo se pueden cargar documentos PDF.`);
+                        valido = false;
+                    }
+                    if (!genericMethods.wellFormatName(name)) {
+                        messages.push(`Documento '${name}': no tiene el formato de nombre correcto.`);
+                        valido = false;
+                    }
+
+                    //Si aun es válido el nombre del archivo
+                    if (!!valido) {
+                        const nameSplit = name.split("_");
+                        const companyCode = nameSplit[1];
+                        const formatName = nameSplit[2];
+                        const languageCode = nameSplit[3];
+                        const divisionCode = nameSplit[4]?.split('.')[0];
+                        // const unecoCodeDoc = nameSplit[5]?.split('.')[0];
+
+                        if (cartel?.eci_company?.eci_company_code_number !== companyCode) {
+                            messages.push(`Documento '${name}': el código de la empresa del nombre del archivo no es el mismo del formulario del cartel.`);
+                            valido = false;
+                        }
+
+                        if (cartel?.eci_format?.eci_format_name !== formatName) {
+                            messages.push(`Documento '${name}': el formato del nombre del archivo no es el mismo del formulario del cartel.`);
+                            valido = false;
+                        }
+
+                        if (cartel?.eci_language?.eci_language_code !== languageCode) {
+                            messages.push(`Documento '${name}': el código del idioma del nombre del archivo no es el mismo del formulario del cartel.`);
+                            valido = false;
+                        }
+
+                        const [divisionCodePoster] = cartel?.eci_division_company?.eci_division_company_name?.split(' - ');
+                        if (divisionCodePoster !== divisionCode) {
+                            messages.push(`Documento '${name}': el código de la división del nombre del archivo no es el mismo del formulario del cartel.`);
+                            valido = false;
+                        }
+
+                        //Si aun es válido el nombre del archivo
+                        if (!!valido) {
+                            if (versionName === "V1") {
+                                if (languageCode !== CONSTANTS.IDIOMA.CASTELLANO && languageCode !== CONSTANTS.IDIOMA.PORTUGUES) {
+                                    const fileNameSpanish = name?.replace(`_${languageCode}_`, `_${CONSTANTS.IDIOMA.CASTELLANO}_`);
+                                    const cartelsByFileNameSpanish = await serviceMethods.getCartelsByNameSpanish(fileNameSpanish);
+                                    if (!cartelsByFileNameSpanish?.length) {
+                                        messages.push(`Documento '${name}': no existe un cartel con el mismo nombre y con el idioma castellano para la asignación del cartel a traducir`);
+                                        valido = false;
+                                    }
+                                    else {
+                                        //Obtener el cartel original para la asignación de cartel traducido
+                                        cartelOriginal = [...cartelsByFileNameSpanish];
+                                    }
+
+                                }
+                            }
+                            else {
+                                const [fileNameShort] = name?.split('_');
+                                const [posterName] = cartel?.eci_poster_name?.split('_');
+                                if (posterName !== fileNameShort) {
+                                    messages.push(`Documento '${name}': el nombre del archivo debe ser igual al nombre del cartel, intente modificar el nombre del archivo.`);
+                                    valido = false;
+                                }
+                            }
+                        }
+
+                    }
+
+                    return valido;
+                }
+
+
+                const validoArchivo = await validFile();
+
+                if (!validoArchivo) {
+                    var alertStrings = { confirmButtonLabel: "Aceptar", text: messages.join('\n\n'), title: "Información" };
+                    await Xrm.Navigation.openAlertDialog(alertStrings);
+                }
+                else {
+                    respuestaValidacion = true;
+                    if (cartel?.eci_language?.eci_language_code !== CONSTANTS.IDIOMA.CASTELLANO && cartel?.eci_language?.eci_language_code !== CONSTANTS.IDIOMA.PORTUGUES && versionName === "V1") {
+                        //LOGICA PARA REGISTRAR EL CARTEL TRADUCIDO
+                        const batchRequestPosterTranslated = await Promise.all((cartelOriginal || []).map(async (x) => {
+                            const payloadCartelTrad = {
+                                "eci_poster_origin@odata.bind": "/eci_posters(" + x?.eci_posterid + ")",
+                                "eci_poster_translated@odata.bind": "/eci_posters(" + cartelId + ")"
+                            }
+                            // Update a Request
+                            var request = new Object();
+                            request.getMetadata = function () {
+                                return {
+                                    boundParameter: undefined,
+                                    operationType: 2,
+                                    operationName: "Create" // Operation
+                                };
+                            };
+                            request.etn = "eci_poster_translated";
+                            request.payload = payloadCartelTrad;
+
+                            return request;
+                        }));
+                        await serviceMethods.batchMultiple(batchRequestPosterTranslated);
+                    }
+                }
+            }
+            Xrm.Utility.closeProgressIndicator();
+            return respuestaValidacion;
+        }
     };
 }).call(UsePosterVersion);
